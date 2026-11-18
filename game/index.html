@@ -3,17 +3,40 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Dodger</title>
-<style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #11141b; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-</style>
+<meta name="theme-color" content="#163c43">
+<meta name="description" content="Street Empire: Marisol Bay. An original, offline 3D coastal city to explore on foot and behind the wheel.">
+<title>Street Empire — Marisol Bay</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2323444c'/%3E%3Cpath d='M12 48V16h9l11 18 11-18h9v32H42V33L32 47 22 33v15' fill='%23e2f1a1'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="./src/style.css">
+<script type="importmap">{"imports":{"three":"./vendor/three/three.module.min.js"}}</script>
 </head>
 <body>
-<canvas id="game" aria-label="Block Dodger: move the paddle left and right to dodge falling blocks and catch coins"></canvas>
+<canvas id="game" aria-label="Marisol Bay 3D game world. WASD to move, E to enter a vehicle."></canvas>
+<div id="vignette"></div>
+<div id="loading"><span class="loading-mark">M</span><p>BUILDING YOUR NEXT CHAPTER<span class="loading-dots">…</span></p></div>
+<div id="hud" hidden>
+  <div id="location"><div class="city-emblem">M<span>✦</span></div><div><span class="eyebrow">MARISOL BAY</span><strong id="district">CENTRO</strong><span id="clock">16:42 <i>☀</i></span></div></div>
+  <div id="account"><div class="stars" aria-label="Wanted level" id="wanted">☆☆☆☆☆</div><div class="cash" id="cash">$1,250</div><div class="account-label">CASH ON HAND</div></div>
+  <div id="toasts" role="log" aria-live="polite"></div>
+  <div id="map-panel"><div class="map-heading"><span>MARISOL / LIVE</span><span id="compass">N ↑</span></div><canvas id="minimap" width="440" height="352" aria-label="Live minimap with roads, player, traffic, pedestrians and beach waypoint"></canvas><div class="map-bottom"><span class="waypoint-dot"></span><span id="waypoint-label">MAMA ROSA</span><span id="waypoint-distance">300 m</span></div><div id="vitals"><span class="avatar">DF</span><div><div class="vital"><span>+</span><div class="bar"><i id="health"></i></div><b id="health-label">100</b></div><div class="vital armor"><span>◇</span><div class="bar"><i id="armor"></i></div><b id="armor-label">40</b></div></div></div></div>
+  <div id="objective-panel"><span class="eyebrow" id="objective-source">MAMA ROSA / PRESS M</span><strong id="objective">Six jobs. One way to a fresh start.</strong><small id="objective-timer"></small></div><div id="combat-hud"><strong id="weapon-label">FISTS</strong><span id="ammo-label">F / PUNCH</span><span id="token-label">☀ 0 / 20</span><span id="police-status"></span></div><div id="crosshair" hidden>+</div><div id="waypoint-hud" hidden><b>◇</b><span></span></div><div id="intro-card"><span class="eyebrow">A CITY OF SECOND CHANCES</span><h2>Make yourself<br>at home.</h2><p>You’re Dario Fuentes. A fresh start,<br>Mama Rosa’s jobs, an open road.</p><span class="card-line"></span><small>M · OPEN STORY JOBS</small></div>
+  <div id="context"><kbd>E</kbd><span id="context-text">Enter vehicle</span></div>
+  <div id="drive-hud" hidden><div class="speed-line"><strong id="speed">0</strong><span>KM/H<br><b id="gear">N</b></span></div><div class="speed-track"><i id="speed-fill"></i></div><div id="vehicle-name">SOLERO · GT</div><div class="car-condition"><span>ENGINE</span><div><i id="car-health"></i></div></div></div>
+  <div id="controls-hint"><span><kbd>WASD</kbd> MOVE</span><span><kbd>SHIFT</kbd> SPRINT</span><span><kbd>SPACE</kbd> JUMP</span><span><kbd>RMB</kbd> LOOK</span><span><kbd>F / CLICK</kbd> FIGHT</span><span><kbd>M</kbd> JOBS</span><span><kbd>ESC</kbd> PAUSE</span></div>
+  <div id="street-name">PALMA AVENUE <span>/</span> MARISOL BAY</div>
+</div>
+<div id="title" class="menu">
+  <div class="title-top"><span class="city-emblem">M<span>✦</span></span><span>AN ORIGINAL OPEN WORLD</span><span class="edition">VOL. 01 / MARISOL BAY</span></div>
+  <div class="title-content"><div class="title-kicker"><i></i> WELCOME TO THE SUNSHINE UNDERWORLD</div><h1>STREET<br><span>EMPIRE</span><b>MARISOL BAY</b></h1><p class="tagline">Arrive unknown. Leave a legend.</p><p class="title-copy">One newcomer. A city of possibility.<br>Find your ride. Take the long way home.</p><button id="start-button" class="primary">ENTER MARISOL <span>↗</span></button><button id="continue-button" class="secondary" hidden>CONTINUE SAVED EMPIRE ↗</button><div class="title-keys"><kbd>WASD</kbd> Move / drive <span>·</span> <kbd>E</kbd> Enter a car <span>·</span> <kbd>RMB</kbd> Look</div></div>
+  <div class="title-bottom"><span>DARIO FUENTES / A FRESH START</span><span>COASTAL ROADS. CITY NIGHTS. YOUR STORY.</span></div>
+  <div class="vista-caption"><span>25° 41′ N / 80° 09′ W</span><strong>THE BAY IS CALLING.</strong><i></i></div>
+</div>
+<div id="pause" class="menu" hidden><div class="pause-card"><span class="eyebrow">STREET EMPIRE / MARISOL BAY</span><h2>Taking a<br>breather.</h2><p>The city can wait.</p><button id="resume-button" class="primary">BACK TO THE STREETS <span>↗</span></button><div class="pause-actions"><button id="save-button" class="secondary">Save game</button><button id="mute-button" class="secondary">Audio on / 0 to mute</button></div><button id="title-button" class="secondary">Return to title</button><div class="pause-controls"><div><kbd>WASD</kbd> Walk / accelerate / brake / steer</div><div><kbd>SHIFT</kbd> Sprint <kbd>SPACE</kbd> Jump / handbrake</div><div><kbd>E</kbd> Enter / exit a stopped vehicle</div><div><kbd>RMB DRAG</kbd> Orbit camera <kbd>ESC / P</kbd> Pause</div></div><small>Autosaves to this browser. M / missions · 1–3 / weapons · T / taxi · 0 / mute.</small></div></div>
 <p id="status" role="status" aria-live="polite"></p>
 <script type="module" src="./src/main.js"></script>
+<div id="missions" class="menu" hidden><div class="story-card"><span class="eyebrow">MAMA ROSA / THE MARISOL STORY</span><h2>Your next chapter.</h2><p>Complete the jobs in order. The city stays open between missions.</p><div id="mission-list"></div><button id="mission-close" class="secondary">BACK TO THE STREETS / M</button></div></div>
+<div id="briefing" class="menu" hidden><div class="story-card"><span class="eyebrow">JOB BRIEFING / MAMA ROSA</span><h2 id="briefing-title"></h2><p id="briefing-copy"></p><div id="briefing-pay"></div><button id="accept-mission" class="primary">TAKE THE JOB <span>↗</span></button><button id="decline-mission" class="secondary">Back to the streets</button></div></div>
+<div id="mission-result" class="menu" hidden><div class="story-card"><span class="eyebrow" id="result-label"></span><h2 id="result-title"></h2><p id="result-copy"></p><button id="retry-mission" class="primary">RETRY JOB <span>↗</span></button><button id="result-close" class="secondary">BACK TO THE STREETS</button></div></div>
+<div id="death-screen" class="menu" hidden><div class="story-card"><span class="eyebrow">MARISOL BAY / CONSEQUENCES</span><h2 id="death-title">BUSTED</h2><p id="death-copy"></p><button id="respawn-button" class="primary">GET BACK UP <span>↗</span></button></div></div>
 </body>
 </html>

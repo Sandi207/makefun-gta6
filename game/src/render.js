@@ -1,141 +1,82 @@
-// Drawing only: the world's state and the current screen in, pixels out. The 1280x720 playfield
-// is scaled to fit the window and centred, the margin filled with the backdrop colour. Flat
-// rectangles and circles, canvas text for the HUD and the panels. Text that holds a number is
-// rebuilt only when the number changes, so a frame allocates nothing.
-import { FIELD, FONT, LIVES, PALETTE } from './config.js';
-import { KIND_COIN } from './world.js';
-
-export const SCREEN_TITLE = 'title';
-export const SCREEN_PLAY = 'play';
-export const SCREEN_PAUSED = 'paused';
-export const SCREEN_OVER = 'over';
-
-/** The panel's width; its height grows with its lines: room for the title, the lines and the prompt. */
-const PANEL = { width: 600, top: 134, line: 34, bottom: 70 };
-const LIFE_SIZE = 20;
-const LIFE_GAP = 8;
-
-function cachedLabel(prefix) {
-  let value = -1;
-  let text = '';
-  return function label(next) {
-    if (next !== value) {
-      value = next;
-      text = prefix + next;
+import * as THREE from 'three';
+export function createRenderer(canvas,scene) {
+  const renderer=new THREE.WebGLRenderer({canvas,antialias:false,powerPreference:'high-performance',alpha:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,1.25));renderer.setSize(innerWidth,innerHeight);
+  renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;
+  renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.13;
+  const camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,1800);
+  scene.fog=new THREE.FogExp2('#c5d5cd',0.0018);
+  const hemi=new THREE.HemisphereLight('#c4e9f0','#b59a78',2.0);scene.add(hemi);
+  const sun=new THREE.DirectionalLight('#ffe0ab',2.9);sun.position.set(-100,165,-90);sun.castShadow=true;
+  sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-100;sun.shadow.camera.right=100;sun.shadow.camera.top=100;sun.shadow.camera.bottom=-100;
+  sun.shadow.camera.near=1;sun.shadow.camera.far=450;sun.shadow.bias=-0.0005;sun.shadow.normalBias=0.08;scene.add(sun);scene.add(sun.target);
+  const uniforms={top:{value:new THREE.Color('#5cabbf')},horizon:{value:new THREE.Color('#f2daba')},sunDir:{value:new THREE.Vector3(-0.65,0.52,-0.6).normalize()},night:{value:0}};
+  const sky=new THREE.Mesh(new THREE.SphereGeometry(900,24,16),new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,uniforms,
+    vertexShader:'varying vec3 direction; void main(){direction=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+    fragmentShader:'varying vec3 direction; uniform vec3 top; uniform vec3 horizon; uniform vec3 sunDir; uniform float night; void main(){ vec3 d=normalize(direction); float t=smoothstep(-0.1,0.8,d.y); vec3 c=mix(horizon,top,t); float s=dot(d,sunDir); c+=vec3(1.0,.76,.4)*pow(max(s,0.0),40.0)*.13*(1.0-night); c=mix(c,vec3(1.0,.9,.65),smoothstep(.9992,.9995,s)*(1.0-night)); gl_FragColor=vec4(c,1.0);\n#include <tonemapping_fragment>\n#include <colorspace_fragment>\n}'}));
+  sky.frustumCulled=false;scene.add(sky);
+  let cameraReady=false, lowTime=0, highTime=0, ratio=Math.min(devicePixelRatio,1.25);
+  const aimRay=new THREE.Raycaster(),cameraBoxes=new WeakMap();
+  const wanted=new THREE.Vector3(),target=new THREE.Vector3(),look=new THREE.Vector3();
+  // Camera collision uses city AABBs analytically, so orbit never sits inside a tower.
+  function cameraCollision(position,aim,city) {
+    const direction=position.clone().sub(aim),distance=direction.length();direction.normalize();
+    let nearest=distance;
+    const ray=new THREE.Ray(aim,direction),hit=new THREE.Vector3();
+    for(const b of city.colliders) {
+      if(aim.x+distance<b.minX||aim.x-distance>b.maxX||aim.z+distance<b.minZ||aim.z-distance>b.maxZ)continue;
+      let box=cameraBoxes.get(b);if(!box){box=new THREE.Box3(new THREE.Vector3(b.minX-0.2,0,b.minZ-0.2),new THREE.Vector3(b.maxX+0.2,b.height+0.5,b.maxZ+0.2));cameraBoxes.set(b,box);}
+      if(ray.intersectBox(box,hit)) {const d=hit.distanceTo(aim);if(d>0.6&&d<nearest)nearest=Math.max(0.7,d-0.35);}
     }
-    return text;
-  };
-}
-
-export function createRenderer(canvas) {
-  const context = canvas.getContext('2d');
-  const view = { scale: 1, x: 0, y: 0 };
-  const scoreLabel = cachedLabel('Score ');
-  const levelLabel = cachedLabel('Level ');
-  const finalLabel = cachedLabel('Score ');
-  const bestLabel = cachedLabel('Best ');
-
-  function resize() {
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.round(window.innerWidth * ratio);
-    const height = Math.round(window.innerHeight * ratio);
-    canvas.width = width;
-    canvas.height = height;
-    view.scale = Math.min(width / FIELD.width, height / FIELD.height);
-    view.x = (width - FIELD.width * view.scale) / 2;
-    view.y = (height - FIELD.height * view.scale) / 2;
+    position.copy(aim).addScaledVector(direction,nearest);
   }
-
-  const fonts = new Map();
-  function text(value, x, y, size, color, align) {
-    if (!fonts.has(size)) fonts.set(size, `${size}px ${FONT}`);
-    context.font = fonts.get(size);
-    context.fillStyle = color;
-    context.textAlign = align;
-    context.fillText(value, x, y);
-  }
-
-  function drawField(state) {
-    context.fillStyle = PALETTE.sky;
-    context.fillRect(0, 0, FIELD.width, FIELD.height);
-    context.fillStyle = PALETTE.ground;
-    context.fillRect(0, FIELD.groundY, FIELD.width, FIELD.height - FIELD.groundY);
-
-    const items = state.items;
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      if (item.kind === KIND_COIN) {
-        context.fillStyle = PALETTE.coin;
-        context.beginPath();
-        context.arc(item.x + item.width / 2, item.y + item.height / 2, item.width / 2, 0, Math.PI * 2);
-        context.fill();
-      } else {
-        context.fillStyle = PALETTE.block;
-        context.fillRect(item.x, item.y, item.width, item.height);
+  function update(state,input,city,dt=1/60,instant=false) {
+    const p=state.player,car=p.vehicle;
+    if(!instant) {
+      lowTime=dt>1/24?lowTime+dt:Math.max(0,lowTime-dt);
+      highTime=dt<1/45?highTime+dt:0;
+      if(lowTime>1.5) {
+        if(ratio>1) {ratio=1;renderer.setPixelRatio(ratio);renderer.setSize(innerWidth,innerHeight);}
+        if(renderer.shadowMap.enabled) {renderer.shadowMap.enabled=false;scene.traverse(o=>{if(o.material){for(const m of Array.isArray(o.material)?o.material:[o.material])m.needsUpdate=true;}});}
       }
+      if(highTime>20&&ratio<Math.min(devicePixelRatio,1.25)) {ratio=Math.min(devicePixelRatio,1.25);renderer.setPixelRatio(ratio);renderer.setSize(innerWidth,innerHeight);highTime=0;}
     }
-
-    const player = state.player;
-    // Blink while invulnerable after a hit: hidden on every other tenth of a second.
-    if (player.invulnerable === 0 || Math.floor(player.invulnerable * 10) % 2 === 1) {
-      context.fillStyle = PALETTE.player;
-      context.fillRect(player.x, player.y, player.width, player.height);
+    if(state.mode==='title') {
+      const a=state.shot?0:Math.sin(state.elapsed*0.018)*0.06;
+      wanted.set(262+Math.sin(a)*30,126,244);target.set(18,24,-25);
+      camera.fov=55;
+    } else {
+      camera.fov=car?60+Math.min(9,Math.abs(car.speed)*0.13):58;
+      let yaw=input.orbit.yaw;
+      if(car&&!input.orbit.dragging&&!instant) {
+        const delta=Math.atan2(Math.sin(car.yaw-yaw),Math.cos(car.yaw-yaw));
+        input.orbit.yaw+=delta*Math.min(1,dt*2.6);yaw=input.orbit.yaw;
+      }
+      const distance=car?10.4+Math.min(3,Math.abs(car.speed)*0.05):6.5;
+      const height=car?4.5:1.7+Math.sin(input.orbit.pitch)*distance;
+      const shoulder=car?0.75:0.55;
+      wanted.set(p.x-Math.sin(yaw)*distance-Math.cos(yaw)*shoulder,(car?0:p.y)+height,p.z-Math.cos(yaw)*distance+Math.sin(yaw)*shoulder);
+      target.set(p.x,(car?1.1:p.y+1.22),p.z);
+      cameraCollision(wanted,target,city);
     }
+    if(!cameraReady||instant) {camera.position.copy(wanted);look.copy(target);cameraReady=true;}
+    else {camera.position.lerp(wanted,1-Math.exp(-dt*7));look.lerp(target,1-Math.exp(-dt*10));}
+    camera.lookAt(look);camera.updateProjectionMatrix();sky.position.copy(camera.position);
+    for(const c of state.cars)c.mesh.visible=(!c.police||c.active||c===p.vehicle)&&c.mesh.position.distanceTo(camera.position)<(state.mode==='title'?550:155);
+    for(const [kind,mesh] of Object.entries(state.weaponMeshes))mesh.visible=!car&&state.weapon===kind;
+    if(!car&&state.weapon!=='fists')p.mesh.userData.limbs[0].rotation.x=-1.25;
+    for(const a of [...state.peds,...state.gangs,...state.officers])a.mesh.visible=(a.role!=='police'||a.active)&&a.mesh.position.distanceTo(camera.position)<110;
+    sun.position.set(p.x-100,165,p.z-90);sun.target.position.set(p.x,0,p.z);
+    // A long cycle preserves the afternoon feel while the city gradually turns to evening.
+    const hour=state.clock/60,daylight=Math.max(0,Math.sin((hour-6)/24*Math.PI*2));
+    const night=1-Math.min(1,daylight*3.0);uniforms.night.value=night;
+    uniforms.top.value.set('#5cabbf').lerp(new THREE.Color('#17253e'),night);
+    uniforms.horizon.value.set('#f2daba').lerp(new THREE.Color('#695871'),night);
+    sun.intensity=2.9*(1-night)+0.15;hemi.intensity=2*(1-night)+0.6;
+    scene.fog.color.set('#c5d5cd').lerp(new THREE.Color('#38445b'),night);
   }
-
-  function drawHud(state) {
-    context.textBaseline = 'top';
-    text(scoreLabel(state.score), 24, 20, 28, PALETTE.text, 'left');
-    text(levelLabel(state.level), FIELD.width / 2, 20, 28, PALETTE.text, 'center');
-    const firstLife = FIELD.width - 24 - LIVES * (LIFE_SIZE + LIFE_GAP) + LIFE_GAP;
-    text('Lives', firstLife - 12, 20, 28, PALETTE.text, 'right');
-    for (let life = 0; life < LIVES; life += 1) {
-      context.fillStyle = life < state.lives ? PALETTE.player : PALETTE.ground;
-      context.fillRect(firstLife + life * (LIFE_SIZE + LIFE_GAP), 24, LIFE_SIZE, LIFE_SIZE);
-    }
-  }
-
-  function drawPanel(title, lines, prompt) {
-    const height = PANEL.top + lines.length * PANEL.line + PANEL.bottom;
-    const x = (FIELD.width - PANEL.width) / 2;
-    const y = (FIELD.height - height) / 2;
-    context.fillStyle = PALETTE.panel;
-    context.fillRect(x, y, PANEL.width, height);
-    context.textBaseline = 'alphabetic';
-    text(title, FIELD.width / 2, y + 78, 48, PALETTE.text, 'center');
-    for (let index = 0; index < lines.length; index += 1) {
-      text(lines[index], FIELD.width / 2, y + PANEL.top + index * PANEL.line, 22, PALETTE.muted, 'center');
-    }
-    text(prompt, FIELD.width / 2, y + height - 40, 24, PALETTE.coin, 'center');
-  }
-
-  const TITLE_LINES = ['Dodge the red blocks. Catch the gold coins.', 'Move with ← → or A D.  Pause with P.', ''];
-  const PAUSED_LINES = ['The blocks will wait for you.'];
-  const OVER_LINES = ['', ''];
-
-  /** Paint one frame: the field, then the HUD or a panel for the screen the game is on. */
-  function draw(state, screen, best) {
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.fillStyle = PALETTE.backdrop;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
-    drawField(state);
-    if (screen === SCREEN_TITLE) {
-      TITLE_LINES[2] = bestLabel(best);
-      drawPanel('Block Dodger', TITLE_LINES, 'Press Space or click to start');
-      return;
-    }
-    drawHud(state);
-    if (screen === SCREEN_PAUSED) drawPanel('Paused', PAUSED_LINES, 'Press P to resume');
-    else if (screen === SCREEN_OVER) {
-      OVER_LINES[0] = finalLabel(state.score);
-      OVER_LINES[1] = bestLabel(best);
-      drawPanel('Game over', OVER_LINES, 'Press Space or click to play again');
-    }
-  }
-
-  resize();
-  window.addEventListener('resize', resize);
-  return { draw };
+  function aim(input) {aimRay.setFromCamera(input.pointer,camera);input.aimRay={origin:aimRay.ray.origin.clone(),direction:aimRay.ray.direction.clone()};}
+  function draw() {renderer.render(scene,camera);}
+  window.addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});
+  return {renderer,camera,update,draw,aim,get stats(){return {...renderer.info.render,pixelRatio:ratio,shadows:renderer.shadowMap.enabled};}};
 }

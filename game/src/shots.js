@@ -1,79 +1,52 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
+import { animateCharacter } from './models.js';
+// Deterministic arrangements of actual world entities, no substitute screenshot artwork.
+export function stageShot(name,simulation,input,random) {
+  const state=simulation.state,p=state.player;
+  state.shot=name;state.hasSave=false;state.clock=16*60+42;
+  for(let i=0;i<180;i++)simulation.step(1/60,input,true);
+  input.orbit.yaw=Math.PI;input.orbit.pitch=0.29;
+  state.mode=name==='start'?'title':'play';
+  const traffic=state.cars.filter(c=>c.traffic);
+  const poses=[
+    [59.7,5,0],[68.3,-22,Math.PI],[59.7,-41,0],[68.3,-77,Math.PI],
+    [90,4.3,Math.PI/2],[25,-4.3,-Math.PI/2],[59.7,83,0],
+    [132.3,10,Math.PI],[123.7,-52,0],[4.3,28,Math.PI],
+    [68.3,-115,Math.PI],[155,4.3,Math.PI/2],[59.7,150,0],[196.3,31,Math.PI],
+  ];
+  traffic.forEach((car,i)=>{
+    const [x,z,yaw]=poses[i%poses.length];car.x=x;car.z=z;car.yaw=yaw;car.speed=11+i%4;simulation.syncCar(car);
+    const dir=yaw===0?0:yaw===Math.PI?2:yaw===Math.PI/2?1:3;
+    car.dir=dir;car.node={x:Math.round(x/64)+(dir===1?1:dir===3?-1:0),z:Math.round(z/64)+(dir===0?1:dir===2?-1:0)};
+  });
+  state.peds.forEach((ped,i)=>{
+    ped.x=i<14?(i%2?75.3:52.7):11.3+(i%3)*64;
+    ped.z=i<14?-58+Math.floor(i/2)*19+random()*2:-90+(i-14)*18;
+    ped.axis=0;ped.road=Math.round(ped.x/64)*64;ped.side=ped.x>ped.road?1:-1;ped.dir=i%2?1:-1;
+    ped.mesh.position.set(ped.x,0.17,ped.z);ped.mesh.rotation.y=i%2?Math.PI:0;animateCharacter(ped.mesh,i*1.6,true);
+  });
+  p.x=75;p.z=26;p.y=0.17;p.yaw=Math.PI;
+  p.mesh.position.set(p.x,p.y,p.z);p.mesh.rotation.y=p.yaw;animateCharacter(p.mesh,1.4,true);
+  if(name==='drive'||name==='chase') {
+    const car=simulation.starter;car.x=68.3;car.z=104;car.yaw=Math.PI;car.speed=23.1;car.parked=false;
+    p.vehicle=car;p.x=car.x;p.z=car.z;p.yaw=car.yaw;p.mesh.visible=false;simulation.syncCar(car);
+    simulation.toast(name==='chase'?'MBPD on your tail. Break line of sight and lose the stars.':'Palma Avenue. Take the long way home.');
+    if(name==='chase') {
+      simulation.gameplay.clearPolice();
+      const a=state.police[0];a.active=true;a.x=68.3;a.z=119;a.yaw=Math.PI;a.speed=26;simulation.syncCar(a);
+      const b=simulation.gameplay.policeCar(59.7,133,Math.PI);b.speed=27;simulation.syncCar(b);
+      p.wanted=3;state.lastCrime=state.elapsed;state.unseen=0;
+      input.orbit.yaw=.55;input.orbit.pitch=.32;
     }
+  } else if(name==='street') simulation.toast('Your Solero GT is by the curb. Press E to take the wheel.');
+  if(name==='mission') {
+    state.completed=[0,1,2];simulation.gameplay.prepareMission(3);simulation.gameplay.beginMission();state.mode='play';
+    p.vehicle=null;p.mesh.visible=true;p.x=339;p.z=74;p.y=simulation.floorAt(p.x,p.z);p.yaw=Math.PI;
+    p.mesh.position.set(p.x,p.y,p.z);p.mesh.rotation.y=p.yaw;animateCharacter(p.mesh,1.3,false);
+    state.weapon='pistol';state.ammo.pistol=36;p.armor=65;
+    const gang=state.gangs.slice(0,3);
+    gang.forEach((a,i)=>{a.x=[339,333,344][i];a.z=[62,63,60][i];a.health=70;a.active=true;a.hostile=true;a.mesh.position.set(a.x,simulation.floorAt(a.x,a.z),a.z);a.mesh.rotation.y=Math.atan2(p.x-a.x,p.z-a.z);animateCharacter(a.mesh,i*1.3,true);});
+    simulation.toast('Los Tiburones hold this corner. Clear the crew for Mama Rosa.','damage');
+    input.orbit.yaw=Math.PI+.22;input.orbit.pitch=.25;
   }
-  return Infinity;
-}
-
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
-  }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
-}
-
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
-  }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
-  }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  state.clock=16*60+42;state.elapsed=4;simulation.gameplay.updateWaypoint();
 }
